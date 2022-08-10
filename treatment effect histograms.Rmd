@@ -1,0 +1,63 @@
+---
+title: "treatment_effect"
+author: "Alisaww"
+date: "2022-07-28"
+output: html_document
+---
+```{r}
+library(tidyverse)
+library(ggplot2)
+```
+
+
+Firstly, load the data and see the effect of the drug treatment on the total PANSS score over time.
+```{r}
+setwd("/Users/quyunjie/Desktop/STATS202/FinalProjectData")
+A=read.csv("Study_A.csv")
+B=read.csv("Study_B.csv")
+C=read.csv("Study_C.csv")
+D=read.csv("Study_D.csv")
+E=read.csv("Study_E.csv")
+summary(E)
+```
+
+```{r}
+#remove LeadStatus column
+A1 = A[ , -which(names(A) %in% c("LeadStatus"))]
+B1 = B[ , -which(names(B) %in% c("LeadStatus"))]
+C1 = C[ , -which(names(C) %in% c("LeadStatus"))]
+D1 = D[ , -which(names(D) %in% c("LeadStatus"))]
+#combine datasets
+combined = rbind(A1,B1,C1,D1,E) 
+combined$P_Total=rowSums(combined[,c("P1","P2","P3","P4","P5","P6","P7")])
+combined$N_Total=rowSums(combined[,c("N1","N2","N3","N4","N5","N6","N7")])
+combined$G_Total=rowSums(combined[,c("G1","G2","G3","G4","G5","G6","G7","G8","G9","G10","G11","G12","G13","G14","G15","G16")])
+combined_1 = filter(combined, combined$VisitDay == 0)
+```
+
+
+```{r}
+treatment=combined_1[which(combined_1$TxGroup == "Treatment"),]
+control=combined_1[which(combined_1$TxGroup == "Control"),]
+```
+
+```{r}
+ggplot(combined_1, aes(x=P_Total, color=TxGroup)) +
+  geom_histogram(fill="white", alpha=0.5, position="identity")
+ggplot(combined_1, aes(x=N_Total, color=TxGroup)) +
+  geom_histogram(fill="white", alpha=0.5, position="identity")
+ggplot(combined_1, aes(x=G_Total, color=TxGroup)) +
+  geom_histogram(fill="white", alpha=0.5, position="identity")
+ggplot(combined_1, aes(x=PANSS_Total, color=TxGroup)) +
+  geom_histogram(fill="white", alpha=0.5, position="identity")
+```
+
+```{r}
+ggplot(combined, aes(x=VisitDay, color=TxGroup)) +
+  geom_histogram(fill="white", alpha=0.5, position="identity")+
+  geom_boxplot(outlier.color = "yellow",outlier.shape = 5)
+```
+
+
+
+

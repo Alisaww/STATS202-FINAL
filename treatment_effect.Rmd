@@ -1,0 +1,134 @@
+---
+title: "treatment_effect"
+author: "Alisaww"
+date: "2022-07-28"
+output: html_document
+---
+```{r}
+library(dplyr)
+library(ggplot2)
+library(hexbin)
+library(RColorBrewer)
+library(extrafont)
+library(ggfortify)
+library(ggsci)
+#library(forecast)
+#library(zoo)
+library(extrafont)
+```
+
+
+Firstly, load the data and see the effect of the drug treatment on the total PANSS score over time.
+```{r}
+getwd()
+setwd("/Users/quyunjie/Desktop/STATS202/FinalProjectData")
+A=read.csv("Study_A.csv")
+B=read.csv("Study_B.csv")
+C=read.csv("Study_C.csv")
+D=read.csv("Study_D.csv")
+E=read.csv("Study_E.csv")
+summary(E)
+```
+```{r}
+#remove LeadStatus column
+A1 = A[ , -which(names(A) %in% c("LeadStatus"))]
+B1 = B[ , -which(names(B) %in% c("LeadStatus"))]
+C1 = C[ , -which(names(C) %in% c("LeadStatus"))]
+D1 = D[ , -which(names(D) %in% c("LeadStatus"))]
+combined=rbind(A1,B1,C1,D1,E)
+```
+
+First plot `PANSS_Total` vs `VisitDay`, for the `Treatment` and `Control` groups.
+```{r}
+treatment=combined[which(combined$TxGroup == "Treatment"),]
+control=combined[which(combined$TxGroup == "Control"),]
+
+p=ggplot(NULL,aes())+
+  geom_point(data=treatment,aes(x=VisitDay,y=PANSS_Total,col="Treatment"),size=0.7)+
+  geom_point(data=control,aes(x=VisitDay,y=PANSS_Total,col="Control",),shape=23,size=0.7)+
+  #scale_color_manual(values=rev(pal_aaas("default")(11)))+
+  #geom_line(data=treatment,aes(x=VisitDay,y=PANSS_Total,col="Treatment"))+
+  #geom_line(data=control,aes(x=VisitDay,y=PANSS_Total,col="Control"))+
+  theme_light()+
+  theme(axis.title = element_text(color='black', vjust=0.1),
+       axis.ticks.length = unit(-0.4,"lines"),
+       axis.ticks = element_line(color='black'),
+       legend.position ="top",
+       legend.title=element_blank())
+ggsave("pansstotal_vs_visitday.png",width=6,height=4,units="in",device="png",dpi="retina")
+
+```
+
+A plot of the total PANSS score over time does not seem to suggest a treatment effect. But to quantify this we can do a linear regression on the total PANSS score vs time, where we regress PANSS_Total onto VisitDay, and a dummy variable for Control or Treatment interacting with VisitDay: $y=\beta_0 + \beta_1*VisitDay + \beta_2*VisitDay*Treatment$
+
+```{r}
+i=38
+
+p = ggplot(NULL,aes())+
+  geom_point(data=treatment,aes(x=VisitDay,y=treatment[,i],col="Treatment"),size=0.5)+
+  geom_point(data=control,aes(x=VisitDay,y=control[,i],col="Control"),size=0.5)+
+  #scale_color_manual(values=rev(pal_aaas("default")(2)))+
+  theme_minimal()+
+  theme(legend.position = "top",legend.title=element_blank(),plot.title=element_text(hjust=0.5,size=10,family="Lato"),plot.subtitle=element_text(hjust=0.5,size=8,family="Lato"),text=element_text(size=10,family="Lato"))
+print(p)
+```
+Again do not see an appreciable difference between control and treatment. 
+
+```{r}
+combined$totalP=rowSums(combined[,c("P1","P2","P3","P4","P5","P6","P7")])
+combined$totalN=rowSums(combined[,c("N1","N2","N3","N4","N5","N6","N7")])
+combined$totalG=rowSums(combined[,c("G1","G2","G3","G4","G5","G6","G7","G8","G9","G10","G11","G12","G13","G14","G15","G16")])
+treatment=combined[which(combined$TxGroup == "Treatment"),]
+control=combined[which(combined$TxGroup == "Control"),]
+p = ggplot(NULL,aes())+
+  geom_point(data=treatment,aes(x=VisitDay,y=totalG,col="Treatment"),size=0.5)+
+  geom_point(data=control,aes(x=VisitDay,y=totalG,col="Control"),size=0.5)+
+  #scale_color_manual(values=rev(pal_aaas("default")(2)))+
+  theme_minimal()+
+  theme(legend.position = "top",
+        legend.title=element_blank(),
+        plot.title=element_text(hjust=0.5,size=10,family="Lato"),
+        plot.subtitle=element_text(hjust=0.5,size=8,family="Lato"),text=element_text(size=10,family="Lato"))
+ggsave("panss_total_g.png",width=6,height=4,units="in",device="png",dpi="retina")
+print(p)
+#p + p+ facet_grid(cols = vars(3))
+```
+
+```{r}
+combined$TxGroup = factor(combined$TxGroup)
+lm.fit=lm(PANSS_Total~VisitDay+VisitDay:TxGroup, data=combined)
+contrasts(combined$TxGroup) # display encoding for treatment 
+```
+The dummy encoding is 1 for treatment, 0 for Control.
+
+```{r examine linear regression}
+summary(lm.fit)
+```
+```{r}
+lm.fit.p=lm(totalP~VisitDay+VisitDay:TxGroup, data=combined)
+lm.fit.n=lm(totalN~VisitDay+VisitDay:TxGroup, data=combined)
+lm.fit.g=lm(totalG~VisitDay+VisitDay:TxGroup, data=combined)
+```
+
+```{r}
+summary(lm.fit.p)
+summary(lm.fit.n)
+summary(lm.fit.g)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
