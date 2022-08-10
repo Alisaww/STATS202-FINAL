@@ -1,0 +1,371 @@
+---
+title: "Untitled"
+author: "Alisaww"
+date: "2022-07-29"
+output: html_document
+---
+
+```{r}
+library(h2o)          
+library(plyr)
+library(ggplot2)
+library(ggsci)
+```
+
+
+
+## Setup
+```{r Load Data}
+setwd("/Users/quyunjie/Desktop/STATS202/FinalProjectData")
+A=read.csv("Study_A.csv")
+B=read.csv("Study_B.csv")
+C=read.csv("Study_C.csv")
+D=read.csv("Study_D.csv")
+E=read.csv("Study_E.csv")
+summary(E)
+length(unique(E$PatientID))
+
+```
+Note that most patients from study E are from USA or Russia (about an even split). 
+
+
+Creates a list of the patientsVfor the Kaggle submission. 
+```{r}
+submission = read.csv("sample_submission_PANSS.csv")
+# the PatientID for Kaggle submission 
+prediction.patients = submission$PatientID 
+length(prediction.patients)         
+length(unique(prediction.patients)) 
+```
+
+Number of visits each patient have.
+```{r number-visits}
+ # meaning of stat option: "If you want the heights of the bars to represent values in the data, use stat="identity" and map a value to the y aesthetic."
+# p
+numberOFvisits = count(E, vars = "PatientID")
+#del <- which(numberOFvisits$freq=="1")
+#number.visits = numberOFvisits[-del,]
+
+# Basic barplot
+p<-ggplot(data=numberOFvisits, aes(x=PatientID, y=freq)) +
+   geom_bar(stat="identity") 
+# meaning of stat option: "If you want the heights of the bars to represent values in the data, use stat="identity" and map a value to the y aesthetic."
+p
+```
+
+Data Cleaning
+Choose columns corresponding to our prediction and combine.
+```{r subset-df}
+A2 = subset(A, select = c(PatientID, Country, TxGroup, Study, VisitDay,PANSS_Total))
+B2 = subset(B, select = c(PatientID, Country, TxGroup, Study, VisitDay,PANSS_Total))
+C2 = subset(C, select = c(PatientID, Country, TxGroup, Study, VisitDay,PANSS_Total))
+D2 = subset(D, select = c(PatientID, Country, TxGroup, Study, VisitDay,PANSS_Total))
+E2 = subset(E, select = c(PatientID, Country, TxGroup, Study, VisitDay,PANSS_Total))
+combined = rbind(A2,B2,C2,D2,E2)
+summary(combined)
+```
+
+The final visit day for each patient from A to E.
+```{r}
+for (i in 1:dim(combined)[1]) {
+  id = combined[i,"PatientID"]
+  patient = subset(combined,PatientID == id)
+  finalday = max(patient$VisitDay)
+  #if (finalday==0){ # several patients must have dropped out immediately 
+  #  print(combined[i,])
+  #}
+  combined[i,"FinalDay"] = finalday
+}
+#  del <- which(combined$FinalDay=="0")
+#  combined1 = combined[-del,]
+```
+
+#Create test set 
+The patient's whose score we will predict on Kaggle. 
+```{r }
+select_patients = subset(combined, VisitDay==FinalDay & PatientID %in% prediction.patients)
+dim(select_patients)[1] 
+```
+There are patients who were assessed multiple times in the same day by the same person and at the same location (for example, PatientID 50505). 
+```{r}
+for (id in unique(select_patients$PatientID)) { 
+  sub_df = subset(select_patients, PatientID==id)
+  if (dim(sub_df)[1]>1){
+    print(sub_df)
+  }
+}
+```
+multiple patients were assessed multiple times on the final day. Remove such duplicates with the `distinct()` function.
+```{r remove-duplicates}
+library(dplyr)
+test = distinct(select_patients)
+dim(test)[1]
+```
+This still doesn't yield a dataset of size 513 
+```{r}
+for (id in unique(test$PatientID)) { # for each unique id
+  sub_df = subset(test, PatientID==id)
+  if (dim(sub_df)[1]>1){
+    print(sub_df)
+  }
+}
+test
+```
+The reason is the difference in PANSS_Total. My solution is to average the values: 
+```{r average}
+library(data.table)
+# all column names except for PANSS_Total
+m <- colnames(select_patients)[!grepl('PANSS_Total',colnames(test))] 
+X <- as.data.table(test)
+test = X[,list(mm=mean(PANSS_Total)),m]
+names(test)[length(names(test))] = "PANSS_Total"
+dim(test)
+```
+Which returns the desired number of 513 rows. 
+
+We would like test set to best reflect the "18-th week" visit. 
+To do so, we imagine each patient going back for assessment one week after final week. 
+So we add a value of 7 days to their `VisitDay`. 
+We also drop the `FinalDay` column at this point. 
+Also potentially scale the data here depending on the subsequent methods used. 
+```{r}
+MSE = test # for calculating MSE later 
+#test = subset(test, select = c(PatientID, Country, TxGroup, VisitDay, Study))
+test$VisitDay = test$VisitDay + 7 
+#select_patients$VisitDay = scale(select_patients$VisitDay)
+#select_patients$PANSS_Total = scale(select_patients$PANSS_Total)
+```
+
+# Naive forecasting
+```{r}
+# create "Naive" submission 
+write.csv(test[,c("PatientID","PANSS_Total")],'naive_forecast.csv',row.names=FALSE)
+```
+
+```{r}
+#see distributions
+hist(combined$PANSS_Total)
+hist(E2$PANSS_Total)
+hist(select_patients$PANSS_Total)
+```
+
+To remove some variance from naive prediction, we can take the simple average of these last two visit scores. First, we need to take note of the `VisitDay` and `PANSS_Total` for the second to last day. 
+```{r}
+naive = subset(MSE, select = c("PatientID","VisitDay","PANSS_Total")) 
+# rename column
+names(naive)[2] = "LastVisitDay" 
+names(naive)[3] = "FinalScore" 
+# find second to last visit day 
+for (id in naive$PatientID) { 
+  sub_df = subset(E2, PatientID==id)
+  x = sub_df$VisitDay
+  n <- length(x)
+  if (n==1) {
+    naive[naive$PatientID == id,"SecondToLastDay"] = NA_integer_
+  }else{
+    naive[naive$PatientID == id,"SecondToLastDay"] = sort(x,partial=n-1)[n-1]
+  }
+}
+# find second to last score 
+naive$SecondToLastScore = as.numeric(naive$FinalScore)
+for (id in naive$PatientID) {
+  day = as.integer(naive[naive$PatientID == id,"SecondToLastDay"])
+  if (is.na(day)){
+    naive[naive$PatientID == id,"SecondToLastScore"] = NA_integer_
+  }else{
+    sub_df = subset(E2, PatientID==id & VisitDay==day)
+    if (dim(sub_df)[1] > 1){
+      # take simple average 
+      naive[naive$PatientID == id,"SecondToLastScore"] = mean(sub_df$PANSS_Total)
+    }else{
+      naive[naive$PatientID == id,"SecondToLastScore"] = sub_df$PANSS_Total
+    }
+  }
+}
+```
+
+```{r}
+# average final two scores
+naive$FinalScore = as.numeric(naive$FinalScore)
+naive$PANSS_Total = as.numeric(naive$FinalScore)
+for (id in naive$PatientID) { 
+  day = as.integer(naive[naive$PatientID == id,"SecondToLastDay"])
+  if (is.na(day)){
+    naive[naive$PatientID == id,"PANSS_Total"] = naive[naive$PatientID == id,"FinalScore"]
+  }else{
+    naive[naive$PatientID == id,"PANSS_Total"] = mean(c(as.integer(naive[naive$PatientID == id,"FinalScore"]),as.integer(naive[naive$PatientID == id,"SecondToLastScore"])))
+  }
+}
+# create submission
+write.csv(naive[,c("PatientID","PANSS_Total")],'less-naive-forecast.csv',row.names=FALSE)
+```
+
+Repeat this process, now storing data for the third day. 
+```{r}
+# find third to last visit day 
+for (id in naive$PatientID) {
+  sub_df = subset(E2, PatientID==id)
+  x = sub_df$VisitDay
+  n <- length(x)
+  if (n >2) {
+    naive[naive$PatientID == id,"ThirdToLastDay"] = sort(x,partial=n-2)[n-2]
+  }else{
+    naive[naive$PatientID == id,"ThirdToLastDay"] = NA_integer_
+  }
+}
+naive$ThirdToLastScore = as.numeric(naive$FinalScore)
+# find third to last score 
+naive$ThirdToLastScore = as.numeric(naive$FinalScore)
+for (id in naive$PatientID) { 
+  day = as.integer(naive[naive$PatientID == id,"ThirdToLastDay"])
+  if (is.na(day)){
+    naive[naive$PatientID == id,"ThirdToLastScore"] = NA
+  }else{
+    sub_df = subset(E2, PatientID==id & VisitDay==day)
+    if (dim(sub_df)[1] > 1){ # take simple average in this case
+      naive[naive$PatientID == id,"ThirdToLastScore"] = mean(sub_df$PANSS_Total)
+    }else{
+      naive[naive$PatientID == id,"ThirdToLastScore"] = sub_df$PANSS_Total
+    }
+  }
+}
+
+```
+
+Repeat this process, now storing data for the fourth day.
+```{r }
+# find fourth to last visit day 
+for (id in naive$PatientID) { # for each unique id
+  sub_df = subset(E2, PatientID==id)
+  x = sub_df$VisitDay
+  n <- length(x)
+  if (n<4) {
+    naive[naive$PatientID == id,"FourthToLastDay"] = NA_integer_
+  }else{
+    naive[naive$PatientID == id,"FourthToLastDay"] = sort(x,partial=n-3)[n-3]
+  }
+}
+# find fourth to last score 
+naive$FourthToLastScore = as.numeric(naive$FinalScore)
+for (id in naive$PatientID) { # for each unique id
+  day = as.integer(naive[naive$PatientID == id,"FourthToLastDay"])
+  if (is.na(day)){
+    naive[naive$PatientID == id,"FourthToLastScore"] = NA_real_
+  }else{
+    sub_df = subset(E2, PatientID==id & VisitDay==day)
+    if (dim(sub_df)[1] > 1){ # take simple average in this case
+      naive[naive$PatientID == id,"FourthToLastScore"] = mean(sub_df$PANSS_Total)
+    }else{
+      naive[naive$PatientID == id,"FourthToLastScore"] = sub_df$PANSS_Total
+    }
+  }
+}
+```
+
+
+Use the idea of exponential smoothing to weigh historical data that does not follow a strong trend.
+looking at the two most recent days: 
+```{r}
+naive$PANSS_Total = 0*naive$PANSS_Total
+for (id in naive$PatientID) { 
+  day = as.integer(naive[naive$PatientID == id,"SecondToLastDay"])
+  if (is.na(day)){
+    naive[naive$PatientID == id,"PANSS_Total"] = naive[naive$PatientID == id,"FinalScore"]
+  }else{
+    day2 = as.integer(naive[naive$PatientID == id,"ThirdToLastDay"])
+      alpha = 0.9
+      naive[naive$PatientID == id,"PANSS_Total"] = alpha*naive[naive$PatientID == id,"FinalScore"] + alpha*(1-alpha)*naive[naive$PatientID == id,"SecondToLastScore"]
+  }
+}
+# create submission script
+write.csv(naive[,c("PatientID","PANSS_Total")],'2days-naive-forecast.csv',row.names=FALSE)
+```
+Justified at truncating at two days for $\alpha = 0.9$ for we incur a $0.9*(0.1)^3*100 = 0.09\%$ error. 
+
+
+looking at the three most recent days: 
+```{r }
+naive$PANSS_Total = 0*naive$PANSS_Total
+for (id in naive$PatientID) { # for each unique id
+  day = as.integer(naive[naive$PatientID == id,"SecondToLastDay"])
+  if (is.na(day)){
+    naive[naive$PatientID == id,"PANSS_Total"] = naive[naive$PatientID == id,"FinalScore"]
+  }else{
+    day2 = as.integer(naive[naive$PatientID == id,"ThirdToLastDay"])
+    if (is.na(day2)){
+      alpha = 0.9
+      naive[naive$PatientID == id,"PANSS_Total"] = alpha*naive[naive$PatientID == id,"FinalScore"] + alpha*(1-alpha)*naive[naive$PatientID == id,"SecondToLastScore"]
+    }else{
+      alpha = 0.8
+      naive[naive$PatientID == id,"PANSS_Total"] = alpha*naive[naive$PatientID == id,"FinalScore"] + alpha*(1-alpha)*naive[naive$PatientID == id,"SecondToLastScore"]  + alpha*(1-alpha)^2*naive[naive$PatientID == id,"ThirdToLastScore"]
+    }
+  }
+}
+# create submission script
+write.csv(naive[,c("PatientID","PANSS_Total")],'3days-naive-forecast.csv',row.names=FALSE)
+```
+Justified at truncating at three days for $\alpha = 0.8$ for we incur a $0.8*(0.2)^4*100 = 0.128\%$ error. 
+
+
+looking at the four most recent days: 
+```{r}
+naive$PANSS_Total = 0*naive$PANSS_Total
+for (id in naive$PatientID) { # for each unique id
+  day = as.integer(naive[naive$PatientID == id,"SecondToLastDay"])
+  if (is.na(day)){
+    naive[naive$PatientID == id,"PANSS_Total"] = naive[naive$PatientID == id,"FinalScore"]
+  }else{
+    day2 = as.integer(naive[naive$PatientID == id,"ThirdToLastDay"])
+    if (is.na(day2)){
+      alpha = 0.9
+      naive[naive$PatientID == id,"PANSS_Total"] = alpha*naive[naive$PatientID == id,"FinalScore"] + alpha*(1-alpha)*naive[naive$PatientID == id,"SecondToLastScore"]
+    }else{
+      day3 = as.integer(naive[naive$PatientID == id,"FourthToLastDay"])
+      if (is.na(day3)){
+      alpha = 0.8
+      naive[naive$PatientID == id,"PANSS_Total"] = alpha*naive[naive$PatientID == id,"FinalScore"]
+      + alpha*(1-alpha)*naive[naive$PatientID == id,"SecondToLastScore"]  
+      + alpha*(1-alpha)^2*naive[naive$PatientID == id,"ThirdToLastScore"]
+      }else{
+      alpha = 0.7
+      naive[naive$PatientID == id,"PANSS_Total"] = alpha*naive[naive$PatientID == id,"FinalScore"] 
+      + alpha*(1-alpha)*naive[naive$PatientID == id,"SecondToLastScore"]  
+      + alpha*(1-alpha)^2*naive[naive$PatientID == id,"ThirdToLastScore"] 
+      + alpha*(1-alpha)^3*naive[naive$PatientID == id,"FourthToLastScore"]
+      }
+    }
+  }
+}
+# create submission script
+write.csv(naive[,c("PatientID","PANSS_Total")],'4days-naive-forecast.csv',row.names=FALSE)
+```
+Justified at truncating at two days for $\alpha = 0.7$ for we incur a $0.7*0.3^4*100 = 0.567\%$ error. 
+
+Create training set
+```{r remove-test-from-total}
+dim(combined)
+combined1 = anti_join(combined, select_patients)
+dim(combined1)
+```
+This removes 410 elements as expected. We should also remove any duplicates from here as we did for the test set. 
+
+```{r}
+training = distinct(combined)
+dim(training)[1]
+``` 
+We should also average over cases where all is identical except for the total PANSS score: 
+```{r simple-average-training}
+colls1 <- colnames(training)[!grepl('PANSS_Total',colnames(training))]
+X <- as.data.table(training)
+training = X[,list(mm=mean(PANSS_Total)),colls1]
+names(training)[length(names(training))] = "PANSS_Total"
+dim(training)
+training = subset(training, select = c(PatientID, Country, TxGroup, VisitDay, Study,PANSS_Total))
+```
+
+While we could scale some variables, scaling does not matter for decision trees! 
+```{r training-scale}
+select_patients$PatientID = scale(select_patients$PatientID)
+select_patients$VisitDay = scale(select_patients$VisitDay)
+select_patients$PANSS_Total = scale(select_patients$PANSS_Total)
+```
